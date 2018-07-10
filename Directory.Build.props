@@ -1,0 +1,357 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 本targets固定於 Microsoft.CSharp.targets 之前import -->
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <!-- 
+      EsunPack: True 或其他，判斷為True時候表示為封裝。
+                由指令參數帶入，由指令參數帶入目的是為了控制PackageReference讓pack時能restore 特定套件。
+    -->
+
+    <!-- 是否為Publish專案: 判斷專案名稱為Publish.開頭 -->
+    <_E3IsPublishProj Condition=" $(MSBuildProjectName.StartsWith('Publish.')) ">True</_E3IsPublishProj>
+    <!-- 是否為Publish的Service專案: 判斷為Publish專案 且 專案名稱為.Service(32)結尾 -->
+    <_E3IsPublishServiceProj Condition=" '$(_E3IsPublishProj)'=='True' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(MSBuildProjectName)', '\.Service(32)?$')) ">True</_E3IsPublishServiceProj>
+    <!-- 是否為Mvc專案: 判斷專案名稱為ESUN.*.Web 或 ESUN.*.Web.Test 或 Publish.Web 或 Publish.*.Web -->
+    <_E3IsMvcProj Condition=" $([System.Text.RegularExpressions.Regex]::IsMatch('$(MSBuildProjectName)','^(ESUN|Publish)(\..+)?\.Web(\.Test)?$')) ">True</_E3IsMvcProj>
+    <!-- 是否為Web測試專案: 判斷專案名稱為ESUN.*.Web.Test -->
+    <_E3IsTestWebProj Condition=" $([System.Text.RegularExpressions.Regex]::IsMatch('$(MSBuildProjectName)','^ESUN\..+\.Web\.Test$')) ">True</_E3IsTestWebProj>
+    <!-- 是否為單元測試或Web測試專案: 判斷專案名稱為ESUN.*.Test -->
+    <_E3IsTestProj Condition=" $([System.Text.RegularExpressions.Regex]::IsMatch('$(MSBuildProjectName)','^ESUN\..+\.Test$')) ">True</_E3IsTestProj>
+    <!-- 是否為Web專案: Mvc專案或是Publish專案都是 -->
+    <_E3IsWebProj Condition=" '$(_E3IsMvcProj)'=='True' or '$(_E3IsPublishProj)'=='True' ">True</_E3IsWebProj>
+    <!-- 是否為Build專案: 判斷專案名稱為ESUN.Platform.Build -->
+    <_E3IsBuildProj Condition=" '$(MSBuildProjectName)'=='ESUN.Platform.Build' ">True</_E3IsBuildProj>
+    <!-- 根目錄 -->
+    <_E3RootFolder>$(MSBuildThisFileDirectory)</_E3RootFolder>
+	  <!-- 是否在CI環境下 -->
+    <_E3IsHostedCi Condition=" '$(CIAssambly)'!='' ">True</_E3IsHostedCi>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Publish service 專案為舊的web project, 有自行指定framework了 -->
+    <TargetFramework Condition=" '$(_E3IsPublishServiceProj)'!='True' and '$(_E3IsBuildProj)'!='True' ">net462</TargetFramework>
+    <TargetFrameworks Condition=" '$(_E3IsBuildProj)'=='True' ">net462;netstandard2.0</TargetFrameworks>
+    
+
+	<!-- 程式碼分析規則 -->
+    <CodeAnalysisRuleSet>$(_E3RootFolder)StyleCopRule.ruleset</CodeAnalysisRuleSet>
+    
+    <!--Debug且非封裝時產生xml文件-->
+    <DocumentationFile Condition="'$(_E3IsTestProj)'!='True' and '$(_E3IsBuildProj)'!='True' and '$(_E3IsPublishProj)'!='True' and '$(EsunPack)'!='True' ">$(MSBuildProjectName).xml</DocumentationFile>
+
+    <!-- nuget包的一些資訊 -->
+    <Version>0.9.4</Version>
+    <Company>ESUN</Company>
+    <Product>BigPlatform</Product>
+    <Authors>ESUN</Authors>
+    
+    <!-- mvc可封裝, 預設web專案是無法封裝的 -->
+    <IsPackable Condition=" '$(_E3IsMvcProj)' == 'True' ">true</IsPackable>
+    <!-- 封裝輸出目錄 -->
+    <PackageOutputPath>$(_E3RootFolder).package\</PackageOutputPath>
+  </PropertyGroup>
+
+  <!-- 編譯器會接受它可支援的所有有效語言語法 -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  
+  <!--非Debug, 且非封裝時產生xml文件-->
+  <PropertyGroup Condition="'$(_E3IsTestProj)'!='True' and '$(_E3IsBuildProj)'!='True' and '$(EsunPack)'!='True' ">
+    <DocumentationFile>$(MSBuildProjectName).xml</DocumentationFile>
+  </PropertyGroup>
+  
+  <!-- 針對Web 在 NuGet.Build.Tasks.Pack.targets的_GetPackageFiles前 設定Content對於封裝相關屬性 -->
+  <Target Name="_E3SetPackageContext" Condition=" '$(_E3IsMvcProj)'=='True' " BeforeTargets="_GetPackageFiles">
+    <ItemGroup>
+      <_E3PackageContents Include="@(Content)" Condition="'%(Extension)'=='.json' or '%(Extension)'=='.config'" >
+        <Pack>false</Pack>
+      </_E3PackageContents>
+      <_E3PackageContents Include="@(Content)" Condition="'%(Extension)'!='.json' and '%(Extension)'!='.config' and '%(Content.Pack)'!='false'" >
+        <PackagePath>contentFiles\any\any\_ModuleWebs\$(MSBuildProjectName)\%(Identity)</PackagePath>
+      </_E3PackageContents>      
+      <Content Remove="@(_E3PackageContents)" />
+      <Content Include="@(_E3PackageContents)" />
+	    <Content Include="$(OutputPath)$(MSBuildProjectName).deps.json" PackagePath="lib/$(TargetFramework)"  />
+    </ItemGroup>
+    <!-- 產生 props檔案 -->
+    <PropertyGroup>
+      <_E3PackageBuildText>
+        <![CDATA[<Project>
+	        <ItemGroup>
+		        <_EsunModuleWeb Include="$(MSBuildProjectName)">
+              <Value>%24([System.IO.Path]::GetFullPath("%24(MSBuildThisFileDirectory)..\contentFiles\any\any\_ModuleWebs\$(MSBuildProjectName)\").Replace(%24(UserProfile),"%25USERPROFILE%25"))</Value>
+		        </_EsunModuleWeb>
+	        </ItemGroup>
+        </Project>]]>
+    </_E3PackageBuildText>
+    </PropertyGroup>
+    
+    <ItemGroup>
+      <_E3PackageBuildFile Include="$(BaseIntermediateOutputPath)$(PackageId).props" />
+      <_E3PackageBuildLines Include="$(_E3PackageBuildText)" />
+      <Content Include="@(_E3PackageBuildFile)">
+        <Pack>true</Pack>
+        <PackagePath>build\</PackagePath>
+      </Content>
+      <NuGetPackOutput Include="@(_E3PackageBuildFile)"/>
+    </ItemGroup>
+    <WriteLinesToFile File="@(_E3PackageBuildFile)" Lines="@(_E3PackageBuildLines)" Overwrite="true" />
+  </Target>
+
+  <!-- 設定全部引用的套件 -->
+	<Choose>
+		<When Condition=" '$(_E3IsPublishProj)'!='True' and '$(_E3IsBuildProj)'!='True' ">
+			<ItemGroup>
+  			<PackageReference Include="System.ValueTuple" Version="4.4.0" />
+			</ItemGroup>
+		</When>
+	</Choose>
+  
+  <!-- 設定MVC專案引用的套件 -->
+	<Choose>
+		<When Condition=" '$(_E3IsMvcProj)'=='True' ">
+			<ItemGroup>
+		    <PackageReference Include="Microsoft.AspNetCore" Version="2.0.1" />
+		    <PackageReference Include="Microsoft.AspNetCore.Mvc" Version="2.0.1" />
+		    <!--
+				<ProjectReference Include="$(MSBuildThisFileDirectory)..\Debug-MVC\MetaPackages\src\Microsoft.AspNetCore\Microsoft.AspNetCore.csproj" />
+				<ProjectReference Include="$(MSBuildThisFileDirectory)..\Debug-MVC\Mvc\src\Microsoft.AspNetCore.Mvc\Microsoft.AspNetCore.Mvc.csproj" />
+				<ProjectReference Include="$(MSBuildThisFileDirectory)..\Debug-MVC\Razor\src\Microsoft.AspNetCore.Razor.Language\Microsoft.AspNetCore.Razor.Language.csproj" />
+				<DotNetCliToolReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Tools" Version="1.0.0" />
+		    -->
+			</ItemGroup>
+		</When>
+	</Choose>
+	
+   <!-- 設定非Test專案且DEBUG專用的引用的套件 -->
+	<Choose>
+		<When Condition=" '$(_E3IsTestProj)'!='True' and '$(_E3IsBuildProj)'!='True' and '$(_E3IsPublishProj)'!='True' and '$(Configuration)'=='Debug' and '$(EsunPack)'!='True' ">
+			<ItemGroup>
+        <PackageReference Include="StyleCop.Analyzers" Version="1.0.2" />
+			</ItemGroup>
+		</When>
+	</Choose>	
+  
+    
+  <!-- 設定Test專案引用的套件 -->
+	<Choose>
+		<When Condition=" '$(_E3IsTestProj)' == 'True' and '$(_E3IsTestWebProj)' != 'True' ">
+			<ItemGroup>
+    		<PackageReference Include="xunit" Version="2.3.1" />
+    		<PackageReference Include="xunit.runner.visualstudio" Version="2.3.1" />
+			</ItemGroup>
+		</When>
+	</Choose>	
+
+	<!-- 非publish的MVC專案都設定成library -->
+  <PropertyGroup Condition=" '$(_E3IsMvcProj)'=='True' and '$(_E3IsPublishProj)'!='True' ">
+    <StartupObject />
+    <TargetType>library</TargetType>
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+  </PropertyGroup>
+
+  <!-- Release時不產生pdb, 最佳化程式碼 -->
+  <PropertyGroup Condition=" '$(Configuration)'=='Release' ">
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  
+  <!-- 非Web專案Debug輸出目錄為根目錄下的.outputAP -->
+  <PropertyGroup Condition=" '$(_E3IsHostedCi)'!='True' and '$(Configuration)'=='Debug' and '$(_E3IsWebProj)'!='True' and '$(_E3IsBuildProj)'!='True' ">
+    <OutputPath>$(_E3RootFolder).outputAP/$(TargetFramework)</OutputPath>
+    <OutDir>$(_E3RootFolder).outputAP\$(TargetFramework)\</OutDir>
+  </PropertyGroup>  
+
+  <!-- 將app.json增加列為組態檔, 參考Microsoft.Common.CurrentVersion.targets -->
+  <Target Name="AppendJsonConfig" BeforeTargets="_CopyAppConfigFile">
+    <ItemGroup>
+      <AppConfigWithTargetPath Include="@(None);@(Content)" Condition="'%(Filename)%(Extension)'=='app.json'">
+        <TargetPath>$(TargetFileName)%(Extension)</TargetPath>
+      </AppConfigWithTargetPath>
+      <AppConfigWithTargetPath Include="@(None);@(Content)" Condition="'%(Filename)%(Extension)'=='app.Development.json'">
+        <TargetPath>$(TargetFileName).Development%(Extension)</TargetPath>
+      </AppConfigWithTargetPath>
+    </ItemGroup>  	
+  </Target>
+  
+  <!-- 複製Publish.Web參考專案的deps.json檔到執行目錄下, 供Razor編譯使用 -->
+  <Target Name="_E3CopyDepsFiles" AfterTargets="Build" Condition=" '$(_E3IsPublishProj)'=='True' and '$(_E3IsPublishServiceProj)'!='True' ">
+    <ItemGroup>
+      <_DepsFilePaths Include="$([System.IO.Path]::ChangeExtension('%(_ResolvedProjectReferencePaths.FullPath)', '.deps.json'))" />
+      <_DepsFilePaths Include="$([System.IO.Path]::ChangeExtension('%(Reference.ResolvedPath);', '.deps.json'))" />
+    </ItemGroup>
+    <Copy SourceFiles="%(_DepsFilePaths.FullPath)" DestinationFolder="$(OutputPath)" Condition="Exists('%(_DepsFilePaths.FullPath)')" />
+  </Target>
+  
+    <!-- 拷貝Deps.json至Publish目錄 -->
+  <Target Name="_E3AddDepsFiles"  Condition="$(_E3IsMvcProj)=='True' and $(_E3IsPublishProj)=='True'" BeforeTargets="GetCopyToPublishDirectoryItems">
+    <ItemGroup>
+      <TempDepsFiles Include="@(_DepsFilePaths)" 
+                     Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('%(FullPath)','ESUN\..+\.Web\.Test\.deps\.json$'))" />
+      <_DepsFilePaths Remove="@(_DepsFilePaths)" />
+      <_DepsFilePaths Include="@(TempDepsFiles)" />
+      <ContentWithTargetPath Include="%(_DepsFilePaths.FullPath)" Condition="Exists('%(_DepsFilePaths.FullPath)')"
+                             TargetPath="%(FileName).json" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+  
+  <!-- 清除預設ResolvedFileToPublish -->
+  <Target Name="_E3RemoveFileToPublish" Condition="$(MSBuildProjectName)=='Publish.Web'" AfterTargets="_ComputeCopyToPublishDirectoryItems">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- 排除Web測試專案dll -->
+  <Target Name="_E3RemoveTestAssmeblies" Condition="$(MSBuildProjectName)=='Publish.Web'"  BeforeTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <TempResolvedAssemblies Include="@(ResolvedAssembliesToPublish)" 
+                              Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('%(DestinationSubPath)','^ESUN\..+\.Web\.Test'))"/>
+      <ResolvedAssembliesToPublish Remove="@(ResolvedAssembliesToPublish)"/>
+      <ResolvedAssembliesToPublish Include="@(TempResolvedAssemblies)"/>
+      <TempResolvedAssemblies Remove="TempResolvedAssemblies"/>
+    </ItemGroup>
+  </Target>
+
+  <!-- 為了客製化TargetPath，重寫取得ResolvedFileToPublish的目標 -->
+  <Target Name="_E3ComputeCopyToPublishDirectoryItems" Condition="$(MSBuildProjectName)=='Publish.Web'" BeforeTargets="ComputeFilesToPublish" DependsOnTargets="_E3GetCopyToPublishDirectoryItems">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="@(_SourceItemsToCopyToPublishDirectoryAlways)">
+        <RelativePath>%(_SourceItemsToCopyToPublishDirectoryAlways.TargetPath)</RelativePath>
+        <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+
+      <ResolvedFileToPublish Include="@(_SourceItemsToCopyToPublishDirectory)">
+        <RelativePath>%(_SourceItemsToCopyToPublishDirectory.TargetPath)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+  
+  <!-- 取得所有要被拷貝到Publish目錄中的檔案，參考Microsoft.NET.Publish.targets -->
+  <Target Name="_E3GetCopyToPublishDirectoryItems"
+          Returns="@(AllPublishItemsFullPathWithTargetPath)"
+          Condition="'$(_E3IsMvcProj)'=='True' and '$(_E3IsTestWebProj)'!='True'"
+          KeepDuplicateOutputs=" '$(MSBuildDisableGetCopyToPublishDirectoryItemsOptimization)' == '' "
+          DependsOnTargets="AssignTargetPaths;
+                            DefaultCopyToPublishDirectoryMetadata;
+                            _SplitProjectReferencesByFileExistence;
+                            _GetProjectReferenceTargetFrameworkProperties">
+
+    <!-- In the general case, clients need very little of the metadata which is generated by invoking this target on this project and its children.  For those
+         cases, we can immediately discard the unwanted metadata, reducing memory usage, particularly in very large and interconnected systems of projects.
+         However, if some client does require the original functionality, it is sufficient to set MSBuildDisableGetCopyToPublishDirectoryItemsOptimization to
+         a non-empty value and the original behavior will be restored. -->
+    <PropertyGroup Condition=" '$(MSBuildDisableGetCopyToPublishDirectoryItemsOptimization)' == '' ">
+      <_GCTPDIKeepDuplicates>false</_GCTPDIKeepDuplicates>
+      <_GCTPDIKeepMetadata>CopyToPublishDirectory;TargetPath</_GCTPDIKeepMetadata>
+    </PropertyGroup>
+
+    <!-- 只有Publish專案才會對其參考的專案進行MSBuild，取得各個專案要被拷貝的檔案 -->
+    <MSBuild Projects="@(_MSBuildProjectReferenceExistent)"
+             Targets="_E3GetCopyToPublishDirectoryItems"
+             BuildInParallel="$(BuildInParallel)"
+             Properties="%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+             Condition="'@(_MSBuildProjectReferenceExistent)' != '' and '$(_GetChildProjectCopyToPublishDirectoryItems)' == 'true' and '%(_MSBuildProjectReferenceExistent.Private)' != 'false' and '$(_E3IsPublishProj)'=='True'"
+             ContinueOnError="$(ContinueOnError)"
+             RemoveProperties="%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)">
+
+      <Output TaskParameter="TargetOutputs" ItemName="_AllChildProjectPublishItemsWithTargetPath"/>
+
+    </MSBuild>
+    
+    <!-- Area路徑，用來修正拷貝檔案目標路徑-->
+    <PropertyGroup>
+      <_AreaPath Condition="'$(_E3IsMvcProj)'=='True' and '$(_E3IsPublishProj)'!='True' and '$(MSBuildProjectName)'!='ESUN.Platform.Web'">Areas\$([System.Text.RegularExpressions.Regex]::Match('$(MSBuildProjectName)','\w+(?=\.Web$)'))\</_AreaPath>
+    </PropertyGroup>
+
+    <!-- Target outputs must be full paths because they will be consumed by a different project. -->
+    <ItemGroup>
+      <_ChildSourceItemsToCopyToPublishDirectoryAlways KeepDuplicates=" '$(_GCTPDIKeepDuplicates)' != 'false' "
+                                                  KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                                  Include="@(_AllChildProjectPublishItemsWithTargetPath->'%(FullPath)')"
+                                                  Condition="'%(_AllChildProjectPublishItemsWithTargetPath.CopyToPublishDirectory)'=='Always'"/>
+
+      <_ChildSourceItemsToCopyToPublishDirectory KeepDuplicates=" '$(_GCTPDIKeepDuplicates)' != 'false' "
+                                            KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                            Include="@(_AllChildProjectPublishItemsWithTargetPath->'%(FullPath)')"
+                                            Condition="'%(_AllChildProjectPublishItemsWithTargetPath.CopyToPublishDirectory)'=='PreserveNewest'"/>
+    </ItemGroup>
+
+    <!-- Remove items which we will never again use - they just sit around taking up memory otherwise -->
+    <ItemGroup>
+      <_AllChildProjectPublishItemsWithTargetPath Remove="@(_AllChildProjectPublishItemsWithTargetPath)"/>
+    </ItemGroup>
+
+    <!-- 清空_SourceItemsToCopyToPublishDirectoryAlways, _SourceItemsToCopyToPublishDirectory. -->
+    <ItemGroup>
+      <_SourceItemsToCopyToPublishDirectoryAlways Remove="@(_SourceItemsToCopyToPublishDirectoryAlways)" />
+      <_SourceItemsToCopyToPublishDirectory Remove="@(_SourceItemsToCopyToPublishDirectory)" />
+    </ItemGroup>
+    
+    <!-- Get items from this project last so that they will be copied last. -->
+    <ItemGroup>
+      <_SourceItemsToCopyToPublishDirectoryAlways KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                                  Include="@(ContentWithTargetPath->'%(FullPath)')"
+                                                  Condition="'%(ContentWithTargetPath.CopyToPublishDirectory)'=='Always'"/>
+      <_SourceItemsToCopyToPublishDirectory KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                            Include="@(ContentWithTargetPath->'%(FullPath)')"
+                                            Condition="'%(ContentWithTargetPath.CopyToPublishDirectory)'=='PreserveNewest'"/>
+    </ItemGroup>
+
+    <ItemGroup>
+      <_SourceItemsToCopyToPublishDirectoryAlways KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                                  Include="@(EmbeddedResource->'%(FullPath)')"
+                                                  Condition="'%(EmbeddedResource.CopyToPublishDirectory)'=='Always'"/>
+      <_SourceItemsToCopyToPublishDirectory KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                            Include="@(EmbeddedResource->'%(FullPath)')"
+                                            Condition="'%(EmbeddedResource.CopyToPublishDirectory)'=='PreserveNewest'"/>
+    </ItemGroup>
+
+    <ItemGroup>
+      <_CompileItemsToPublish Include="@(Compile->'%(FullPath)')"
+                              Condition="'%(Compile.CopyToPublishDirectory)'=='Always' or '%(Compile.CopyToPublishDirectory)'=='PreserveNewest'"/>
+    </ItemGroup>
+
+    <AssignTargetPath Files="@(_CompileItemsToPublish)" RootFolder="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="AssignedFiles" ItemName="_CompileItemsToPublishWithTargetPath" />
+    </AssignTargetPath>
+
+    <ItemGroup>
+      <_SourceItemsToCopyToPublishDirectoryAlways KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                                  Include="@(_CompileItemsToPublishWithTargetPath)"
+                                                  Condition="'%(_CompileItemsToPublishWithTargetPath.CopyToPublishDirectory)'=='Always'"/>
+      <_SourceItemsToCopyToPublishDirectory KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                           Include="@(_CompileItemsToPublishWithTargetPath)"
+                                           Condition="'%(_CompileItemsToPublishWithTargetPath.CopyToPublishDirectory)'=='PreserveNewest'"/>
+    </ItemGroup>
+
+    <ItemGroup>
+      <_SourceItemsToCopyToPublishDirectoryAlways KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                                  Include="@(_NoneWithTargetPath->'%(FullPath)')"
+                                                  Condition="'%(_NoneWithTargetPath.CopyToPublishDirectory)'=='Always'"/>
+      <_SourceItemsToCopyToPublishDirectory KeepMetadata="$(_GCTPDIKeepMetadata)"
+                                            Include="@(_NoneWithTargetPath->'%(FullPath)')"
+                                            Condition="'%(_NoneWithTargetPath.CopyToPublishDirectory)'=='PreserveNewest'"/>
+    </ItemGroup>
+
+    <!-- 修改檔案TargetPath -->
+    <ItemGroup>
+      <_TempSourceItemsAlways Include="@(_SourceItemsToCopyToPublishDirectoryAlways)" TargetPath="$(_AreaPath)%(TargetPath)" />
+      <_TempSourceItems Include="@(_SourceItemsToCopyToPublishDirectory)" TargetPath="$(_AreaPath)%(TargetPath)" />
+      <_SourceItemsToCopyToPublishDirectoryAlways Remove="@(_SourceItemsToCopyToPublishDirectoryAlways)" />
+      <_SourceItemsToCopyToPublishDirectory Remove="@(_SourceItemsToCopyToPublishDirectory)" />
+      <_SourceItemsToCopyToPublishDirectoryAlways Include="@(_TempSourceItemsAlways);@(_ChildSourceItemsToCopyToPublishDirectoryAlways)" />
+      <_SourceItemsToCopyToPublishDirectory Include="@(_TempSourceItems);@(_ChildSourceItemsToCopyToPublishDirectory)" />
+      <_TempSourceItemsAlways Remove="@(_TempSourceItemsAlways)" />
+      <_TempSourceItems Remove="@(_TempSourceItems)" />
+    </ItemGroup>
+    
+    <ItemGroup>
+      <AllPublishItemsFullPathWithTargetPath Remove="@(AllPublishItemsFullPathWithTargetPath)"/>
+      <AllPublishItemsFullPathWithTargetPath Include="@(_SourceItemsToCopyToPublishDirectoryAlways->'%(FullPath)');@(_SourceItemsToCopyToPublishDirectory->'%(FullPath)')"/>
+    </ItemGroup>
+  </Target>
+  
+</Project>
